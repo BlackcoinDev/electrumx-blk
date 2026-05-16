@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [electrum-blk]
   pull_request:
-    branches: [master]
+    branches: [electrum-blk]
   workflow_dispatch:  # https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow
 
 concurrency:
