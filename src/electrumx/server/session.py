@@ -9,6 +9,7 @@
 
 import asyncio
 import codecs
+from dataclasses import dataclass
 import datetime
 import itertools
 import math
@@ -20,7 +21,6 @@ from functools import partial
 from ipaddress import IPv4Address, IPv6Address, IPv4Network, IPv6Network
 from typing import Iterable, Optional, TYPE_CHECKING, Sequence, Union, Any
 
-import attr
 from aiorpcx import (Event, JSONRPCAutoDetect, JSONRPCConnection,
                      ReplyAndDisconnect, Request, RPCError, RPCSession, Service,
                      handler_invocation, serve_rs, serve_ws, sleep,
@@ -104,12 +104,12 @@ def assert_list_or_tuple(value: Any) -> None:
         raise RPCError(BAD_REQUEST, f'{value} should be a list')
 
 
-@attr.s(slots=True)
+@dataclass(slots=True)
 class SessionGroup:
-    name = attr.ib()
-    weight = attr.ib()
-    sessions = attr.ib()
-    retained_cost = attr.ib()
+    name: str
+    weight: float
+    sessions: set['SessionBase']
+    retained_cost: float
 
     def session_cost(self):
         return sum(session.cost for session in self.sessions)
@@ -118,13 +118,13 @@ class SessionGroup:
         return self.retained_cost + self.session_cost()
 
 
-@attr.s(slots=True)
+@dataclass(slots=True)
 class SessionReferences:
     # All attributes are sets but groups is a list
-    sessions = attr.ib()
-    groups = attr.ib()
-    specials = attr.ib()    # Lower-case strings
-    unknown = attr.ib()     # Strings
+    sessions: set['SessionBase']
+    groups: Sequence['SessionGroup']
+    specials: set[str]  # Lower-case strings
+    unknown: set[str]
 
 
 class SessionManager:
@@ -671,7 +671,8 @@ class SessionManager:
             self.logger.info(f'request timeout {self.env.request_timeout:,d}s')
             self.logger.info(f'initial concurrent {self.env.initial_concurrent:,d}')
 
-            self.logger.info(f'max response size {self.env.max_send:,d} bytes')
+            self.logger.info(f'max send (response) size {self.env.max_send:,d} bytes')
+            self.logger.info(f'max recv (request) size {self.env.max_recv:,d} bytes')
             if self.env.drop_client is not None:
                 self.logger.info(
                     f'drop clients matching: {self.env.drop_client.pattern}'
@@ -1626,18 +1627,18 @@ class ElectrumX(SessionBase):
             self.logger.info(f'sent tx: {hex_hash}')
             return hex_hash
 
-    async def package_broadcast(self, tx_package: Sequence[str], verbose: bool = False) -> dict:
+    async def package_broadcast(self, raw_txs: Sequence[str], verbose: bool = False) -> dict:
         """Broadcast a package of raw transactions to the network (submitpackage).
         The package must consist of a child with its parents,
         and none of the parents may depend on one another.
 
         raw_txs: a list of raw transactions as hexadecimal strings"""
-        assert_list_or_tuple(tx_package)
-        for raw_tx in tx_package:
+        assert_list_or_tuple(raw_txs)
+        for raw_tx in raw_txs:
             assert_hex_str(raw_tx)
-        self.bump_cost(0.25 + sum(len(tx) / 5000 for tx in tx_package))
+        self.bump_cost(0.25 + sum(len(tx) / 5000 for tx in raw_txs))
         try:
-            daemon_result = await self.session_mgr.broadcast_package(tx_package)
+            daemon_result = await self.session_mgr.broadcast_package(raw_txs)
         except DaemonError as e:
             error, = e.args
             message = error['message']
@@ -1647,8 +1648,8 @@ class ElectrumX(SessionBase):
                 f'the tx package was rejected by network rules.\n\n{message}.',
             )
 
-        self.txs_sent += len(tx_package)
-        self.logger.info(f'broadcasted package: {len(tx_package)=}')
+        self.txs_sent += len(raw_txs)
+        self.logger.info(f'broadcasted package: {len(raw_txs)=}')
         if verbose:
             return daemon_result
 

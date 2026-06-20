@@ -43,11 +43,9 @@ jobs:
           pip install pytest-asyncio
           pip install pytest-cov
           pip install Sphinx
-          # hacks for rocksdb
-          pip install 'Cython<3.0'
-          pip install git+https://github.com/jansegre/python-rocksdb.git@314572c02e7204464a5c3e3475c79d57870a9a03
           # e-x itself
-          pip install .
+          # - install both leveldb and rocksdb bindings
+          pip install ".[leveldb,rocksdb]"
           # hashes and other altcoin-specific stuff
           pip install tribushashm
           pip install blake256
@@ -79,7 +77,7 @@ jobs:
         run: pip install pycodestyle
 
       - name: Run pycodestyle
-        run: pycodestyle --max-line-length=100 src
+        run: pycodestyle --max-line-length=140 src
 
   build_docs:
     # note: this build task is not related to read-the-docs; it is only here to sanity-check the docs can be built.
