@@ -837,17 +837,33 @@ class DeserializerTrezarcoin(Deserializer):
 
 
 class DeserializerBlackcoinSegWit(DeserializerSegWit):
-    '''Deserializer for Blackcoin transactions, supporting both legacy and SegWit formats.
+    '''Deserializer for Blackcoin transactions (both legacy and SegWit).
 
-    Blackcoin transaction versions:
-      - Version 1: legacy format with a 4-byte nTime field after nVersion.
-                   No SegWit support. Used for all pre-SegWit transactions.
-      - Version 2: standard Bitcoin-compatible format, no nTime field.
-                   Supports both legacy (non-witness) and SegWit transactions.
+    Blackcoin uses two transaction serialization formats selected by version:
 
-    The nTime field in V1 sits at byte offset 4, exactly where the SegWit dummy
-    marker (0x00) would appear in a Bitcoin transaction. This is why the version
-    check MUST be done before any SegWit marker detection.
+      V1 (version < 2) — legacy format with a 4-byte nTime after nVersion:
+        [version:4][nTime:4][marker:1][flag:1][inputs...][outputs...][witness...][locktime:4]
+        Supports both legacy (no marker/flag/witness) and SegWit (v0/v1).
+        SegWit marker is at byte offset *8* (after version + nTime).
+        Returns TxTime (legacy) or TxTimeSegWit (SegWit).
+
+      V2 (version >= 2) — standard Bitcoin format, identical to Bitcoin:
+        [version:4][marker:1][flag:1][inputs...][outputs...][witness...][locktime:4]
+        Supports both legacy and SegWit.
+        SegWit marker is at byte offset *4*.
+        Returns Tx (legacy) or TxSegWit (SegWit).
+
+    Relationship to DeserializerSegWit (standard Bitcoin SegWit):
+      DeserializerSegWit always reads the SegWit marker at byte offset 4, which
+      is correct for V2 but wrong for V1 (where offset 4 is the nTime field).
+      This class peeks at the version first, then:
+        - V1: handles both legacy and SegWit inline (marker at offset 8).
+        - V2: delegates entirely to DeserializerSegWit._read_tx_parts(), which
+              handles both SegWit and legacy from offset 4.
+
+    The nTime field in V1 can be exactly 0x00000000, which would look like a
+    SegWit marker to DeserializerSegWit. This is why the version check MUST be
+    done before any SegWit marker detection.
     '''
     BLACKCOIN_TX_VERSION = 2
 
@@ -861,9 +877,56 @@ class DeserializerBlackcoinSegWit(DeserializerSegWit):
         version = self._get_version()
 
         if version < self.BLACKCOIN_TX_VERSION:
-            # Version 1: always legacy with a 4-byte nTime timestamp.
-            # Hard return here ensures the SegWit path below is never reached
-            # for V1 transactions, preventing false SegWit marker detection.
+            # Version 1: has 4-byte nTime after nVersion.
+            # SegWit marker sits at offset 8 (after version + nTime),
+            # not at offset 4 (which is the nTime field itself).
+            if (self.cursor + 9 < self._binary_length and
+                    self.binary[self.cursor + 8] == 0 and
+                    self.binary[self.cursor + 9] != 0):
+                # V1 SegWit: version + time + marker + flag + ...
+                version = self._read_le_int32()
+                time = self._read_le_uint32()
+                start = self.cursor
+                orig_ser = self.binary[orig_start:start]
+
+                marker = self._read_byte()
+                flag = self._read_byte()
+
+                start = self.cursor
+                inputs = self._read_inputs()
+                outputs = self._read_outputs()
+                orig_ser += self.binary[start:self.cursor]
+
+                witness_start = self.cursor
+                witness = self._read_witness(len(inputs))
+                witness_size = self.cursor - witness_start + 2  # +2 for marker/flag
+
+                start = self.cursor
+                locktime = self._read_le_uint32()
+                orig_ser += self.binary[start:self.cursor]
+
+                base_size = self.cursor - orig_start - witness_size
+                weight = 4 * base_size + witness_size
+                vsize = weight // 4 + (weight % 4 > 0)
+
+                txid = self.TX_HASH_FN(orig_ser)
+                wtxid = self.TX_HASH_FN(self.binary[orig_start:self.cursor])
+
+                tx = TxTimeSegWit(
+                    version=version,
+                    time=time,
+                    marker=marker,
+                    flag=flag,
+                    inputs=inputs,
+                    outputs=outputs,
+                    witness=witness,
+                    locktime=locktime,
+                    txid=txid,
+                    wtxid=wtxid,
+                )
+                return tx, vsize
+
+            # V1 legacy: no SegWit.
             tx = TxTime(
                 version=self._read_le_int32(),
                 time=self._read_le_uint32(),
@@ -876,63 +939,9 @@ class DeserializerBlackcoinSegWit(DeserializerSegWit):
             tx.txid = tx.wtxid = self.TX_HASH_FN(self.binary[orig_start:self.cursor])
             return tx, self.cursor - orig_start
 
-        # Version 2+: no nTime field, so byte offset 4 is the SegWit dummy marker,
-        # identical to standard Bitcoin serialization.
-        if (self.cursor + 5 < self._binary_length and
-                self.binary[self.cursor + 4] == 0 and
-                self.binary[self.cursor + 5] != 0):
-
-            version = self._read_le_int32()
-            marker = self._read_byte()
-            flag = self._read_byte()
-
-            start = self.cursor
-            inputs = self._read_inputs()
-            outputs = self._read_outputs()
-
-            # Hash the transaction without witness for txid
-            base_ser = self.binary[orig_start:orig_start+4]  # version
-            base_ser += self.binary[start:self.cursor]  # inputs + outputs
-
-            witness_start = self.cursor
-            witness = self._read_witness(len(inputs))
-            witness_size = self.cursor - witness_start + 2  # +2 for marker/flag
-
-            start = self.cursor
-            locktime = self._read_le_uint32()
-            base_ser += self.binary[start:self.cursor]  # locktime
-
-            base_size = self.cursor - orig_start - witness_size
-            weight = 4 * base_size + witness_size
-            vsize = weight // 4 + (weight % 4 > 0)
-
-            txid = self.TX_HASH_FN(base_ser)
-            wtxid = self.TX_HASH_FN(self.binary[orig_start:self.cursor])
-
-            tx = TxSegWit(
-                version=version,
-                marker=marker,
-                flag=flag,
-                inputs=inputs,
-                outputs=outputs,
-                witness=witness,
-                locktime=locktime,
-                txid=txid,
-                wtxid=wtxid,
-            )
-            return tx, vsize
-
-        # Version 2+ legacy
-        tx = Tx(
-            version=self._read_le_int32(),
-            inputs=self._read_inputs(),
-            outputs=self._read_outputs(),
-            locktime=self._read_le_uint32(),
-            txid=None,
-            wtxid=None,
-        )
-        tx.txid = tx.wtxid = self.TX_HASH_FN(self.binary[orig_start:self.cursor])
-        return tx, self.cursor - orig_start
+        # Version 2+: no nTime field — identical to standard Bitcoin serialization.
+        # DeserializerSegWit handles both SegWit and legacy from offset 4.
+        return super()._read_tx_parts()
 
     def read_tx(self):
         return self._read_tx_parts()[0]
