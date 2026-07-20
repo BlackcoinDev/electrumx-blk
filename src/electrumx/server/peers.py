@@ -14,7 +14,7 @@ import ssl
 import time
 from collections import Counter, defaultdict
 from ipaddress import IPv4Address, IPv6Address
-from typing import TYPE_CHECKING, Type
+from typing import TYPE_CHECKING, Type, Any, Optional
 from functools import partial
 
 import aiohttp
@@ -268,7 +268,10 @@ class PeerManager:
 
             kwargs = {'family': family}
             if kind == 'SSL':
-                kwargs['ssl'] = ssl.SSLContext(ssl.PROTOCOL_TLS)
+                sslc = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                sslc.check_hostname = False
+                sslc.verify_mode = ssl.CERT_NONE
+                kwargs['ssl'] = sslc
 
             if self.env.force_proxy or peer.is_tor:
                 if not self.proxy:
@@ -523,7 +526,7 @@ class PeerManager:
         '''Add a peer passed by the admin over LocalRPC.'''
         await self._note_peers([Peer.from_real_name(real_name, 'RPC')], check_ports=True)
 
-    async def on_add_peer(self, features, source_addr):
+    async def on_add_peer(self, features: dict[str, Any] | Any, source_addr: Optional[str]):
         '''Add a peer (but only if the peer resolves to the source).'''
         if self.env.peer_discovery != self.env.PD_ON:
             return False

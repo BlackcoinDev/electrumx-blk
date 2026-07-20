@@ -15,7 +15,6 @@ license-files = ["LICENCE"]
 requires-python = ">=3.10"
 dependencies = [
     "aiorpcx[ws]>=0.25.0,<0.26",
-    "plyvel",  # TODO rm from default install before 2.0 release
     "aiohttp>=3.3,<4",
 ]
 classifiers = [
@@ -23,7 +22,12 @@ classifiers = [
     "Framework :: AsyncIO",
     "Natural Language :: English",
     "Operating System :: Unix",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Database",
     "Topic :: Internet",
 ]
@@ -36,7 +40,6 @@ Repository = "https://github.com/spesmilo/electrumx"
 [project.scripts]
 electrumx_server = "electrumx.cli.electrumx_server:main"
 electrumx_rpc = "electrumx.cli.electrumx_rpc:main"
-electrumx_compact_history = "electrumx.cli.electrumx_compact_history:main"
 
 [tool.setuptools.dynamic]
 version = { attr = 'electrumx.__version__' }
@@ -53,11 +56,8 @@ rocksdb = [
 dev = [
     "objgraph",
 ]
-rapidjson = [
-    "python-rapidjson>=0.4.1,<2.0",
-]
-ujson = [
-    "ujson>=2.0.0,<4.0.0",
+orjson = [
+    "orjson>=3,<4",
 ]
 uvloop = [
     "uvloop>=0.14",
