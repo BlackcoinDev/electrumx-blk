@@ -852,33 +852,21 @@ class DeserializerTrezarcoin(Deserializer):
 
 
 class DeserializerBlackcoinSegWit(DeserializerSegWit):
-    '''Deserializer for Blackcoin transactions (both legacy and SegWit).
+    '''Deserializer for Blackcoin transactions.
 
-    Blackcoin uses two transaction serialization formats selected by version:
+    Format depends on the transaction version:
 
-      V1 (version < 2) — legacy format with a 4-byte nTime after nVersion:
-        [version:4][nTime:4][marker:1][flag:1][inputs...][outputs...][witness...][locktime:4]
-        Supports both legacy (no marker/flag/witness) and SegWit (v0/v1).
-        SegWit marker is at byte offset *8* (after version + nTime).
-        Returns TxTime (legacy) or TxTimeSegWit (SegWit).
+    * V1 (version < 2):
+      Includes a 4-byte `nTime` field between `version` and the SegWit marker.
+      Format: [version:4][nTime:4][marker:1][flag:1][inputs...]
+      Parsed inline to prevent `nTime=0x00000000` from aliasing a standard SegWit marker.
+      Returns: TxTime | TxTimeSegWit
 
-      V2 (version >= 2) — standard Bitcoin format, identical to Bitcoin:
-        [version:4][marker:1][flag:1][inputs...][outputs...][witness...][locktime:4]
-        Supports both legacy and SegWit.
-        SegWit marker is at byte offset *4*.
-        Returns Tx (legacy) or TxSegWit (SegWit).
-
-    Relationship to DeserializerSegWit (standard Bitcoin SegWit):
-      DeserializerSegWit always reads the SegWit marker at byte offset 4, which
-      is correct for V2 but wrong for V1 (where offset 4 is the nTime field).
-      This class peeks at the version first, then:
-        - V1: handles both legacy and SegWit inline (marker at offset 8).
-        - V2: delegates entirely to DeserializerSegWit._read_tx_parts(), which
-              handles both SegWit and legacy from offset 4.
-
-    The nTime field in V1 can be exactly 0x00000000, which would look like a
-    SegWit marker to DeserializerSegWit. This is why the version check MUST be
-    done before any SegWit marker detection.
+    * V2 (version >= 2):
+      Standard Bitcoin format (no `nTime` field).
+      Format: [version:4][marker:1][flag:1][inputs...]
+      Delegated to `DeserializerSegWit`.
+      Returns: Tx | TxSegWit
     '''
     BLACKCOIN_TX_VERSION = 2
 
@@ -892,9 +880,7 @@ class DeserializerBlackcoinSegWit(DeserializerSegWit):
         version = self._get_version()
 
         if version < self.BLACKCOIN_TX_VERSION:
-            # Version 1: has 4-byte nTime after nVersion.
-            # SegWit marker sits at offset 8 (after version + nTime),
-            # not at offset 4 (which is the nTime field itself).
+            # V1: 4-byte nTime shifts SegWit marker to offset 8.
             if (self.cursor + 9 < self._binary_length and
                     self.binary[self.cursor + 8] == 0 and
                     self.binary[self.cursor + 9] != 0):
@@ -951,20 +937,10 @@ class DeserializerBlackcoinSegWit(DeserializerSegWit):
                 txid_rev=None,
                 wtxid_rev=None,
             )
-        else:
-            tx = Tx(
-                version=self._read_le_int32(),
-                inputs=self._read_inputs(),
-                outputs=self._read_outputs(),
-                locktime=self._read_le_uint32(),
-                txid_rev=None,
-                wtxid_rev=None,
-            )
-        tx.txid_rev = tx.wtxid_rev = self.TX_HASH_FN(self.binary[orig_start:self.cursor])
-        return tx
+            tx.txid_rev = tx.wtxid_rev = self.TX_HASH_FN(self.binary[orig_start:self.cursor])
+            return tx, self.cursor - orig_start
 
-        # Version 2+: no nTime field — identical to standard Bitcoin serialization.
-        # DeserializerSegWit handles both SegWit and legacy from offset 4.
+        # V2: Standard Bitcoin format (no nTime). Delegate to base class.
         return super()._read_tx_parts()
 
     def read_tx(self):
