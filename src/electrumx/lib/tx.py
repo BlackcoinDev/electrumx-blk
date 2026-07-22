@@ -853,19 +853,9 @@ class DeserializerTrezarcoin(Deserializer):
 
 class DeserializerBlackcoinSegWit(DeserializerSegWit):
     '''Deserializer for Blackcoin transactions.
-
-    Format depends on the transaction version:
-
-    * V1 (version < 2):
-      Includes a 4-byte `nTime` field between `version` and the SegWit marker.
-      Format: [version:4][nTime:4][marker:1][flag:1][inputs...]
-      Parsed inline to prevent `nTime=0x00000000` from aliasing a standard SegWit marker.
+    * V1 Includes a 4-byte `nTime` field:
       Returns: TxTime | TxTimeSegWit
-
-    * V2 (version >= 2):
-      Standard Bitcoin format (no `nTime` field).
-      Format: [version:4][marker:1][flag:1][inputs...]
-      Delegated to `DeserializerSegWit`.
+    * V2 Standard Bitcoin format (no `nTime` field):
       Returns: Tx | TxSegWit
     '''
     BLACKCOIN_TX_VERSION = 2
@@ -922,8 +912,8 @@ class DeserializerBlackcoinSegWit(DeserializerSegWit):
                     outputs=outputs,
                     witness=witness,
                     locktime=locktime,
-                    txid=txid,
-                    wtxid=wtxid,
+                    txid_rev=txid,
+                    wtxid_rev=wtxid,
                 )
                 return tx, vsize
 
